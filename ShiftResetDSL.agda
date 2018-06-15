@@ -28,59 +28,86 @@ module Definitional where
   reset : ∀{α β B} → M β β B → M B α α
   reset m k = k (m id)
 
-  fmap : ∀{α ω A B : Set} (f : A → B) (m : M A α ω) → M B α ω
-  fmap f m = bind m λ a → return (f a)
+module Interpretational where
 
-  -- Special instance: exceptions
-  -- handle (... throw e ...)
+  -- α = initial answer type
+  -- ω = final answer type
 
-  throw : ∀{E A B} (e : E) → M A (E ⊎ B) (E ⊎ B)
-  throw e = shift λ _ →  return (inj₁ e)
+  -- Think  M B α ω = (B → α) → ω
 
-  handle : ∀{E B} → M B (E ⊎ B) (E ⊎ B) → Pure (E ⊎ B)
-  handle m = reset (fmap inj₂ m)
+  data M (B : Set) : (α ω : Set) → Set₁ where
+    return : ∀{α} → B → M B α α
+    bind   : ∀{α β ω A} → M A β ω → (A → M B α β) → M B α ω
+    shift  : ∀{α β ω} → ((k : B → α) → M β β ω) → M B α ω
+    -- reset  : ∀{α β} → M β β B → M B α α
 
+  Pure : (B : Set) → Set₁
+  Pure B = ∀{α} → M B α α
 
+  -- Application of an impure dependent function to a pure argument
+  -- is just Agda's application.
 
--- α = initial answer type
--- ω = final answer type
+  app : ∀{α ω A B : Set} {C : A → Set} → ((x : A) → M (C x) α ω) → (a : A) → M (C a) α ω
+  app f a = f a
 
--- Think  M B α ω = (B → α) → ω
+  -- Evaluation representing evaluation contexts as functions
 
-data M (B : Set) : (α ω : Set) → Set₁ where
-  return : ∀{α} → B → M B α α
-  bind   : ∀{α β ω A} → M A β ω → (A → M B α β) → M B α ω
-  shift  : ∀{α β ω} → ((k : B → α) → M β β ω) → M B α ω
-  -- reset  : ∀{α β} → M β β B → M B α α
+  mutual
+    eval : ∀{α ω C} → M C α ω → (C → α) → ω
+    eval (return x) k = k x
+    eval (bind m f) k = eval m (λ a → eval (f a) k)
+    eval (shift f)  k = eval' (f k)
+    -- eval (reset m)  k = k (eval' m)
+
+    eval' : ∀{α ω} → M α α ω → ω
+    eval' m = eval m id
+
+  -- Pure contexts can be modelled using return and bind
+
+  fmap' : ∀{α ω A B : Set} (f : A → B) (m : M A α ω) → M B α ω
+  fmap' f m = bind m λ a → return (f a)
+
+  eval-fmap : ∀{α ω A B : Set} (e : A → B) (m : M A α ω) (k : B → α) →
+    eval (fmap' e m) k ≡ eval m (k ∘ e)
+  eval-fmap e m k = refl
+
+  -- Reset is definable
+
+  reset : ∀{α β B} → M β β B → M B α α
+  reset m = return (eval' m)
+
+-- open Definitional
+open Interpretational
 
 -- Pure contexts can be modelled using return and bind
 
-fmap : ∀{α ω A B : Set} (e : A → B) (m : M A α ω) → M B α ω
-fmap e m = bind m (return ∘ e)
+fmap : ∀{α ω A B : Set} (f : A → B) (m : M A α ω) → M B α ω
+fmap f m = bind m λ a → return (f a)
 
--- Application of an impure dependent function to a pure argument
--- is just Agda's application.
+-- Special instance: exceptions
+-- handle (... throw e ...)
 
-app : ∀{α ω A B : Set} {C : A → Set} → ((x : A) → M (C x) α ω) → (a : A) → M (C a) α ω
-app f a = f a
+Except : (E B A : Set) → Set _
+Except E B A = M A (E ⊎ B) (E ⊎ B)
 
--- Evaluation representing evaluation contexts as functions
+  -- E: type of errors
+  -- B: final answer type
+  -- A: local result type
 
-mutual
-  eval : ∀{α ω C} → M C α ω → (C → α) → ω
-  eval (return x) k = k x
-  eval (bind m f) k = eval m (λ a → eval (f a) k)
-  eval (shift f)  k = eval' (f k)
-  -- eval (reset m)  k = k (eval' m)
+throw : ∀{E A B} (e : E) → Except E B A
+throw e = shift λ _ →  return (inj₁ e)
 
-  eval' : ∀{α ω} → M α α ω → ω
-  eval' m = eval m id
+handle : ∀{E B} → Except E B B → Pure (E ⊎ B)
+handle m = reset (fmap inj₂ m)
 
-eval-fmap : ∀{α ω A B : Set} (e : A → B) (m : M A α ω) (k : B → α) →
-  eval (fmap e m) k ≡ eval m (k ∘ e)
-eval-fmap e m k = refl
+module ExceptionExample where
 
--- Reset is definable
+  open import Data.Unit
+  open import Data.Nat.Base using (ℕ; zero; suc)
 
-resetM : ∀{α β B} → M β β B → M B α α
-resetM m = return (eval' m)
+  pred : ∀{B} → ℕ → Except ⊤ B ℕ
+  pred 0 = throw _
+  pred (suc m) = return m
+
+  test : ℕ → Pure (⊤ ⊎ ℕ)
+  test n = handle (pred n)
